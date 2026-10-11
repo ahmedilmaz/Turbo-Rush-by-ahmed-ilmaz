@@ -3,66 +3,53 @@
   "use strict";
 
   const $ = id => document.getElementById(id);
+  const container = $("scene-container");
 
-  const game = $("game");
-  if (!game || !window.THREE) {
-    console.error("Turbo Rush needs the game HTML and Three.js.");
+  if (!container || !window.THREE) {
+    document.body.innerHTML =
+      '<div style="padding:30px;color:white;background:#07101d;font:18px Arial">Turbo Rush could not load Three.js. Check your internet connection and reload.</div>';
     return;
   }
 
-  // Prevent duplicate initialization
-  if (window.turboRushStarted) return;
-  window.turboRushStarted = true;
-
   const THREE = window.THREE;
 
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87ceeb);
-  scene.fog = new THREE.Fog(0x87ceeb, 45, 230);
+  let scene, camera, renderer, car;
+  let running = false;
+  let gameOver = false;
+  let speed = 0;
+  let distance = 0;
+  let coinsCollected = 0;
+  let nitro = 100;
+  let condition = 100;
+  let steer = 0;
+  let accelerateHeld = false;
+  let brakeHeld = false;
+  let nitroHeld = false;
+  let messageTime = 0;
+  let animationStarted = false;
+  let lastTime = 0;
 
-  const camera = new THREE.PerspectiveCamera(
-    65,
-    game.clientWidth / Math.max(game.clientHeight, 1),
-    0.1,
-    500
-  );
-  camera.position.set(0, 5, 10);
+  const keys = {};
+  const traffic = [];
+  const coins = [];
+  const scenery = [];
+  const roadMarks = [];
+  const clock = new THREE.Clock();
 
-  const renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    powerPreference: "high-performance"
-  });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(game.clientWidth, game.clientHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  const materials = {};
 
-  game.innerHTML = "";
-  game.appendChild(renderer.domElement);
+  function material(name, color, roughness = 0.7, metalness = 0) {
+    if (!materials[name]) {
+      materials[name] = new THREE.MeshStandardMaterial({
+        color, roughness, metalness
+      });
+    }
+    return materials[name];
+  }
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x465568, 2));
-
-  const sunlight = new THREE.DirectionalLight(0xffffff, 2.3);
-  sunlight.position.set(-15, 25, 15);
-  sunlight.castShadow = true;
-  scene.add(sunlight);
-
-  const mat = (color, metalness = 0, roughness = 0.65) =>
-    new THREE.MeshStandardMaterial({ color, metalness, roughness });
-
-  const roadMat = mat(0x292d36);
-  const lineMat = mat(0xffffff);
-  const grassMat = mat(0x23833b);
-  const wheelMat = mat(0x101116);
-  const glassMat = mat(0x152e45, 0.45, 0.2);
-  const goldMat = mat(0xffc928, 0.6, 0.25);
-  const whiteMat = mat(0xffffff);
-
-  function cube(w, h, d, material, x, y, z, parent = scene) {
+  function box(parent, w, h, d, mat, x, y, z) {
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(w, h, d),
-      material
+      new THREE.BoxGeometry(w, h, d), mat
     );
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
@@ -71,183 +58,292 @@
     return mesh;
   }
 
-  // World and road
-  cube(500, 0.2, 500, grassMat, 0, -0.2, -100);
-
-  cube(14, 0.15, 500, roadMat, 0, -0.05, -100);
-
-  for (const x of [-7.3, 7.3]) {
-    cube(0.22, 0.04, 500, whiteMat, x, 0.04, -100);
+  function showMessage(text, seconds = 1.4) {
+    const el = $("message");
+    if (el) el.textContent = text;
+    messageTime = seconds;
   }
 
-  for (const x of [-2.33, 2.33]) {
-    for (let z = 80; z > -350; z -= 8) {
-      cube(0.11, 0.035, 3.5, lineMat, x, 0.05, z);
+  function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 70, 260);
+
+    camera = new THREE.PerspectiveCamera(
+      65, 1, 0.1, 600
+    );
+    camera.position.set(0, 6, 12);
+
+    renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: "high-performance"
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    renderer.shadowMap.enabled = false;
+    renderer.setSize(container.clientWidth || innerWidth, container.clientHeight || innerHeight);
+    container.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xe7f7ff, 0x506044, 2));
+
+    const sun = new THREE.DirectionalLight(0xffffff, 2);
+    sun.position.set(-20, 40, 25);
+    scene.add(sun);
+
+    createWorld();
+    createPlayer();
+    createTraffic();
+    createCoins();
+
+    resize();
+    if (!animationStarted) {
+      animationStarted = true;
+      requestAnimationFrame(animate);
     }
   }
 
-  // Player car
-  const car = new THREE.Group();
-  scene.add(car);
-  car.position.set(0, 0, 4);
+  function createWorld() {
+    const grass = material("grass", 0x398b48);
+    const asphalt = material("asphalt", 0x282d38);
+    const white = material("white", 0xf7fbff);
+    const barrier = material("barrier", 0xe9eff7);
+    const red = material("barrierRed", 0xff304e);
 
-  const bodyMat = mat(0xff251f, 0.35, 0.28);
-  const darkMat = mat(0x181b24, 0.15, 0.35);
+    box(scene, 500, 0.2, 600, grass, 0, -0.2, -180);
+    box(scene, 14, 0.12, 600, asphalt, 0, -0.04, -180);
 
-  cube(1.8, 0.48, 3.5, bodyMat, 0, 0.65, 0, car);
-  cube(1.45, 0.48, 1.65, glassMat, 0, 1.08, -0.35, car);
-  cube(1.65, 0.13, 0.75, bodyMat, 0, 0.91, -1.25, car);
-  cube(1.7, 0.12, 0.7, bodyMat, 0, 0.91, 1.28, car);
-
-  for (const x of [-0.98, 0.98]) {
-    for (const z of [-1.05, 1.05]) {
-      const wheel = new THREE.Mesh(
-        new THREE.BoxGeometry(0.36, 0.52, 0.7),
-        wheelMat
-      );
-      wheel.position.set(x, 0.38, z);
-      wheel.castShadow = true;
-      car.add(wheel);
+    // Road edge lines
+    for (const x of [-6.8, 6.8]) {
+      box(scene, 0.18, 0.04, 600, white, x, 0.04, -180);
     }
-  }
 
-  const headlightMat = new THREE.MeshBasicMaterial({ color: 0xffffcc });
-  cube(0.42, 0.16, 0.08, headlightMat, -0.55, 0.7, -1.78, car);
-  cube(0.42, 0.16, 0.08, headlightMat, 0.55, 0.7, -1.78, car);
-
-  const redLightMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-  cube(0.4, 0.14, 0.08, redLightMat, -0.55, 0.7, 1.78, car);
-  cube(0.4, 0.14, 0.08, redLightMat, 0.55, 0.7, 1.78, car);
-
-  // City buildings
-  const buildings = [];
-  const buildingMats = [
-    mat(0x677a96), mat(0x39485f), mat(0x8998ac),
-    mat(0xd0b28a), mat(0x596d78), mat(0x353d50)
-  ];
-
-  for (let i = 0; i < 100; i++) {
-    for (const side of [-1, 1]) {
-      const w = 3 + Math.random() * 7;
-      const h = 5 + Math.random() * 27;
-      const d = 5 + Math.random() * 10;
-      const x = side * (12 + Math.random() * 35);
-      const z = -i * 7 - Math.random() * 8;
-
-      const b = cube(
-        w, h, d,
-        buildingMats[Math.floor(Math.random() * buildingMats.length)],
-        x, h / 2 - 0.05, z
-      );
-
-      buildings.push({ mesh: b, x, h, d });
-    }
-  }
-
-  // Traffic
-  const traffic = [];
-  const trafficColors = [0x1478ff, 0xffd32a, 0xeeeeee, 0x171923, 0x18bd75];
-
-  function makeTraffic(z) {
-    const group = new THREE.Group();
-    const color = trafficColors[
-      Math.floor(Math.random() * trafficColors.length)
-    ];
-
-    const vehicleMat = mat(color);
-    cube(1.65, 0.52, 3.1, vehicleMat, 0, 0.55, 0, group);
-    cube(1.3, 0.42, 1.35, glassMat, 0, 0.98, -0.25, group);
-
-    for (const x of [-0.9, 0.9]) {
-      for (const wz of [-0.9, 0.9]) {
-        const wheel = new THREE.Mesh(
-          new THREE.BoxGeometry(0.3, 0.42, 0.58),
-          wheelMat
-        );
-        wheel.position.set(x, 0.3, wz);
-        group.add(wheel);
+    // Dashed lane dividers
+    for (const x of [-2.33, 2.33]) {
+      for (let z = 45; z >= -550; z -= 9) {
+        const mark = box(scene, 0.12, 0.035, 4.3, white, x, 0.05, z);
+        roadMarks.push(mark);
       }
     }
 
-    group.position.set([-4.5, 0, 4.5][Math.floor(Math.random() * 3)], 0, z);
-    scene.add(group);
-    traffic.push(group);
+    // Roadside barriers
+    for (const x of [-7.5, 7.5]) {
+      for (let z = 40; z > -560; z -= 10) {
+        box(scene, 0.28, 0.45, 5, barrier, x, 0.2, z);
+        box(scene, 0.3, 0.08, 5, red, x, 0.44, z);
+      }
+    }
+
+    // Distant mountains
+    const mountainMat = material("mountains", 0x7896a4);
+    for (let i = 0; i < 20; i++) {
+      const mountain = new THREE.Mesh(
+        new THREE.ConeGeometry(15 + Math.random() * 18, 20 + Math.random() * 25, 5),
+        mountainMat
+      );
+      mountain.position.set(
+        (i % 2 ? 1 : -1) * (45 + Math.random() * 40),
+        5,
+        -i * 25 - 30
+      );
+      scene.add(mountain);
+    }
+
+    // City buildings
+    const colors = [0x667a91, 0x354a62, 0xa8b7c6, 0xc9b69b, 0x536b78];
+
+    for (let i = 0; i < 65; i++) {
+      for (const side of [-1, 1]) {
+        const w = 4 + Math.random() * 7;
+        const h = 7 + Math.random() * 30;
+        const d = 5 + Math.random() * 10;
+        const x = side * (14 + Math.random() * 40);
+        const z = -i * 10 - Math.random() * 8;
+        const mat = material(
+          "building" + colors[Math.floor(Math.random() * colors.length)],
+          colors[Math.floor(Math.random() * colors.length)]
+        );
+        const building = box(scene, w, h, d, mat, x, h / 2, z);
+        scenery.push({ mesh: building, h, d });
+      }
+    }
+
+    // Street lamps
+    const lampPole = material("lampPole", 0x303d4d, 0.4, 0.4);
+    const lampGlow = new THREE.MeshBasicMaterial({ color: 0xfff1b5 });
+
+    for (let z = 25; z > -550; z -= 24) {
+      for (const side of [-1, 1]) {
+        const x = side * 8.7;
+        box(scene, 0.12, 4.8, 0.12, lampPole, x, 2.4, z);
+        box(scene, 1.2, 0.12, 0.12, lampPole, x - side * 0.5, 4.7, z);
+        box(scene, 0.42, 0.12, 0.3, lampGlow, x - side * 1.05, 4.62, z);
+      }
+    }
   }
 
-  for (let i = 0; i < 9; i++) makeTraffic(-30 - i * 35);
+  function createPlayer() {
+    car = new THREE.Group();
+    scene.add(car);
+    car.position.set(0, 0, 3);
 
-  // Coins
-  const coins = [];
+    const body = material("playerBody", 0xff263f, 0.28, 0.4);
+    const glass = material("glass", 0x173a57, 0.2, 0.3);
+    const tire = material("tire", 0x101218);
+    const trim = material("trim", 0xc9e8f7, 0.25, 0.6);
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xfff8d1 });
+    const tail = new THREE.MeshBasicMaterial({ color: 0xff001e });
 
-  function makeCoin(z) {
-    const coin = new THREE.Mesh(
-      new THREE.TorusGeometry(0.48, 0.15, 10, 20),
-      goldMat
-    );
-    coin.position.set([-4.5, 0, 4.5][Math.floor(Math.random() * 3)], 1.1, z);
-    scene.add(coin);
-    coins.push(coin);
+    box(car, 1.85, 0.5, 3.55, body, 0, 0.65, 0);
+    box(car, 1.45, 0.58, 1.7, glass, 0, 1.12, -0.35);
+    box(car, 1.8, 0.14, 0.7, body, 0, 0.9, -1.35);
+    box(car, 1.8, 0.12, 0.65, body, 0, 0.92, 1.36);
+    box(car, 1.65, 0.08, 0.18, trim, 0, 0.93, -1.79);
+
+    for (const x of [-0.98, 0.98]) {
+      for (const z of [-1.05, 1.05]) {
+        box(car, 0.35, 0.48, 0.68, tire, x, 0.38, z);
+      }
+    }
+
+    box(car, 0.42, 0.16, 0.08, lamp, -0.57, 0.7, -1.81);
+    box(car, 0.42, 0.16, 0.08, lamp, 0.57, 0.7, -1.81);
+    box(car, 0.4, 0.15, 0.08, tail, -0.57, 0.72, 1.81);
+    box(car, 0.4, 0.15, 0.08, tail, 0.57, 0.72, 1.81);
   }
 
-  for (let i = 0; i < 20; i++) makeCoin(-20 - i * 24);
+  function createTrafficCar(color) {
+    const group = new THREE.Group();
+    const body = material("traffic" + color, color, 0.35, 0.2);
+    const glass = material("trafficGlass" + color, 0x173348, 0.2);
+    const tire = material("trafficTire", 0x101218);
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xffe8b4 });
+    const tail = new THREE.MeshBasicMaterial({ color: 0xff001e });
 
-  // Controls
-  const keys = {};
-  let steering = 0;
-  let speed = 0;
-  let distance = 0;
-  let coinCount = 0;
-  let damage = 0;
-  let nitro = 100;
-  let playing = false;
-  let boosting = false;
-  let braking = false;
-  let accelerating = false;
-  let lastTime = 0;
-  let messageTimer = 0;
+    box(group, 1.65, 0.5, 3.15, body, 0, 0.55, 0);
+    box(group, 1.32, 0.44, 1.5, glass, 0, 0.98, -0.2);
 
-  function setMessage(text) {
-    if ($("message")) $("message").textContent = text;
+    for (const x of [-0.88, 0.88]) {
+      for (const z of [-0.95, 0.95]) {
+        box(group, 0.32, 0.42, 0.55, tire, x, 0.3, z);
+      }
+    }
+
+    box(group, 0.3, 0.12, 0.08, lamp, -0.52, 0.66, -1.6);
+    box(group, 0.3, 0.12, 0.08, lamp, 0.52, 0.66, -1.6);
+    box(group, 0.28, 0.12, 0.08, tail, -0.52, 0.66, 1.6);
+    box(group, 0.28, 0.12, 0.08, tail, 0.52, 0.66, 1.6);
+    return group;
+  }
+
+  function createTraffic() {
+    const colors = [0x147dff, 0xffcc27, 0xf4f5f7, 0x171b28, 0x18c88a, 0xff7b28];
+
+    for (let i = 0; i < 9; i++) {
+      const vehicle = createTrafficCar(colors[i % colors.length]);
+      vehicle.position.set([-4.5, 0, 4.5][i % 3], 0, -35 - i * 35);
+      scene.add(vehicle);
+      traffic.push(vehicle);
+    }
+  }
+
+  function createCoins() {
+    const gold = new THREE.MeshStandardMaterial({
+      color: 0xffcf2f,
+      metalness: 0.8,
+      roughness: 0.2,
+      emissive: 0x503100
+    });
+
+    for (let i = 0; i < 24; i++) {
+      const coin = new THREE.Mesh(
+        new THREE.TorusGeometry(0.45, 0.14, 10, 20),
+        gold
+      );
+      coin.position.set([-4.5, 0, 4.5][i % 3], 1.1, -18 - i * 23);
+      scene.add(coin);
+      coins.push(coin);
+    }
+  }
+
+  function resetTraffic(vehicle) {
+    vehicle.position.z = -210 - Math.random() * 100;
+    vehicle.position.x = [-4.5, 0, 4.5][Math.floor(Math.random() * 3)];
+  }
+
+  function resetCoin(coin) {
+    coin.position.z = -230 - Math.random() * 280;
+    coin.position.x = [-4.5, 0, 4.5][Math.floor(Math.random() * 3)];
   }
 
   function updateHUD() {
-    if ($("speed")) $("speed").textContent = Math.round(speed * 8);
-    if ($("distance")) $("distance").textContent = Math.floor(distance);
-    if ($("coins")) $("coins").textContent = coinCount;
-    if ($("damage")) $("damage").textContent = damage + "%";
-    if ($("nitroFill")) $("nitroFill").style.width = nitro + "%";
+    $("speed").textContent = Math.round(speed * 5);
+    $("distance").textContent = Math.floor(distance);
+    $("coins").textContent = coinsCollected;
+    $("nitroFill").style.width = nitro + "%";
+    $("damageFill").style.width = condition + "%";
   }
 
   function startGame() {
-    playing = true;
+    running = true;
+    gameOver = false;
     speed = 0;
     distance = 0;
-    coinCount = 0;
-    damage = 0;
+    coinsCollected = 0;
     nitro = 100;
+    condition = 100;
+    steer = 0;
     car.position.x = 0;
     car.rotation.z = 0;
 
-    if ($("start")) $("start").textContent = "RESTART";
-    setMessage("GO! DRIVE FAST!");
+    traffic.forEach((v, i) => {
+      v.position.x = [-4.5, 0, 4.5][i % 3];
+      v.position.z = -35 - i * 35;
+    });
+
+    coins.forEach((c, i) => {
+      c.position.x = [-4.5, 0, 4.5][i % 3];
+      c.position.z = -18 - i * 23;
+    });
+
+    $("overlay").classList.add("hidden");
+    showMessage("RACE STARTED!", 1.5);
     updateHUD();
   }
 
-  if ($("start")) $("start").addEventListener("click", startGame);
+  $("start").addEventListener("click", startGame);
+
+  // FIXED: left is negative X; right is positive X.
+  function currentSteer() {
+    if (keys.ArrowLeft || keys.KeyA) return -1;
+    if (keys.ArrowRight || keys.KeyD) return 1;
+    return steer;
+  }
 
   window.addEventListener("keydown", e => {
     keys[e.code] = true;
-    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code)) {
-      e.preventDefault();
+
+    if ([
+      "ArrowLeft", "ArrowRight", "ArrowUp",
+      "ArrowDown", "Space"
+    ].includes(e.code)) e.preventDefault();
+
+    if ((e.code === "Enter" || e.code === "Space") && !running) {
+      if (gameOver || !running) startGame();
     }
-    if (e.code === "Enter" && !playing) startGame();
   });
 
   window.addEventListener("keyup", e => {
     keys[e.code] = false;
   });
 
-  function bindHold(id, callback) {
+  window.addEventListener("blur", () => {
+    Object.keys(keys).forEach(k => keys[k] = false);
+    steer = 0;
+    accelerateHeld = false;
+    brakeHeld = false;
+    nitroHeld = false;
+  });
+
+  function holdButton(id, callback) {
     const el = $(id);
     if (!el) return;
 
@@ -268,144 +364,155 @@
     el.addEventListener("contextmenu", e => e.preventDefault());
   }
 
-  bindHold("left", v => { if (v) steering = -1; else if (steering === -1) steering = 0; });
-  bindHold("right", v => { if (v) steering = 1; else if (steering === 1) steering = 0; });
-  bindHold("accelerate", v => accelerating = v);
-  bindHold("brake", v => braking = v);
-  bindHold("boost", v => boosting = v);
+  holdButton("left", v => {
+    if (v) steer = -1;
+    else if (steer === -1) steer = 0;
+  });
 
-  // Keyboard + mobile steering direction is intentionally consistent:
-  // LEFT = negative X; RIGHT = positive X.
-  function getSteering() {
-    if (keys.ArrowLeft || keys.KeyA) return -1;
-    if (keys.ArrowRight || keys.KeyD) return 1;
-    return steering;
+  holdButton("right", v => {
+    if (v) steer = 1;
+    else if (steer === 1) steer = 0;
+  });
+
+  holdButton("accelerate", v => accelerateHeld = v);
+  holdButton("brake", v => brakeHeld = v);
+  holdButton("boost", v => nitroHeld = v);
+
+  function endGame() {
+    running = false;
+    gameOver = true;
+    $("overlay").classList.remove("hidden");
+    $("start").textContent = "RACE AGAIN";
+    $("overlay").querySelector("h1").innerHTML = 'RACE <span>OVER</span>';
+    $("overlay").querySelector("p").textContent =
+      "Distance: " + Math.floor(distance) + " m  •  Coins: " + coinsCollected;
+    $("overlay").querySelector(".eyebrow").textContent = "NICE TRY, RACER";
+    showMessage("GAME OVER!", 3);
   }
 
-  function recycleTraffic(vehicle) {
-    vehicle.position.z = -180 - Math.random() * 100;
-    vehicle.position.x = [-4.5, 0, 4.5][Math.floor(Math.random() * 3)];
-  }
-
-  function recycleCoin(coin) {
-    coin.position.z = -180 - Math.random() * 240;
-    coin.position.x = [-4.5, 0, 4.5][Math.floor(Math.random() * 3)];
-  }
-
-  const clock = new THREE.Clock();
-
-  function animate() {
+  function animate(now) {
     requestAnimationFrame(animate);
 
-    const dt = Math.min(clock.getDelta(), 0.05);
-    const steer = getSteering();
+    // Cap delta to avoid physics jumps when the tab becomes active.
+    const dt = Math.min(clock.getDelta(), 0.04);
 
-    if (playing) {
-      const wantAccelerate = accelerating || keys.ArrowUp || keys.KeyW;
-      const wantBrake = braking || keys.ArrowDown || keys.KeyS;
-      const wantBoost = boosting || keys.Space;
+    if (running) {
+      const go = accelerateHeld || keys.ArrowUp || keys.KeyW;
+      const brake = brakeHeld || keys.ArrowDown || keys.KeyS;
+      const boost = nitroHeld || keys.Space;
 
-      if (wantAccelerate) speed += 22 * dt;
-      else speed -= 5 * dt;
+      if (go) speed += 20 * dt;
+      else speed -= 4 * dt;
 
-      if (wantBrake) speed -= 35 * dt;
+      if (brake) speed -= 28 * dt;
 
-      if (wantBoost && nitro > 0 && speed > 5) {
-        speed += 25 * dt;
-        nitro -= 22 * dt;
+      if (boost && nitro > 0 && speed > 3) {
+        speed += 24 * dt;
+        nitro = Math.max(0, nitro - 25 * dt);
       } else {
-        nitro = Math.min(100, nitro + 4 * dt);
+        nitro = Math.min(100, nitro + 5 * dt);
       }
 
       speed = THREE.MathUtils.clamp(speed, 0, 38);
 
-      // FIX: positive steering moves the car toward the RIGHT.
-      car.position.x += steer * (5 + speed * 0.12) * dt;
-      car.position.x = THREE.MathUtils.clamp(car.position.x, -5.5, 5.5);
+      const direction = currentSteer();
+      // The car's horizontal position follows the requested direction.
+      car.position.x += direction * (4.5 + speed * 0.13) * dt;
+      car.position.x = THREE.MathUtils.clamp(car.position.x, -5.35, 5.35);
 
       car.rotation.z = THREE.MathUtils.lerp(
         car.rotation.z,
-        -steer * 0.12,
+        -direction * 0.1,
         Math.min(1, dt * 8)
       );
 
-      const worldSpeed = speed * dt * 2.8;
-      distance += worldSpeed * 0.12;
+      const travel = speed * dt * 2.7;
+      distance += travel * 0.6;
 
       traffic.forEach(vehicle => {
-        vehicle.position.z += worldSpeed;
+        vehicle.position.z += travel;
 
-        if (vehicle.position.z > 12) recycleTraffic(vehicle);
+        if (vehicle.position.z > 12) resetTraffic(vehicle);
 
         const dx = Math.abs(vehicle.position.x - car.position.x);
         const dz = Math.abs(vehicle.position.z - car.position.z);
 
-        if (dx < 1.55 && dz < 2.6 && speed > 4) {
-          damage = Math.min(100, damage + 25);
-          speed *= 0.45;
-          recycleTraffic(vehicle);
-          setMessage("CRASH! WATCH THE ROAD!");
-          messageTimer = 2;
+        if (dx < 1.45 && dz < 2.5 && speed > 4) {
+          condition = Math.max(0, condition - 25);
+          speed *= 0.38;
+          resetTraffic(vehicle);
+          showMessage("CRASH! WATCH OUT!", 1.5);
+
+          if (condition <= 0) endGame();
         }
       });
 
       coins.forEach(coin => {
-        coin.position.z += worldSpeed;
+        coin.position.z += travel;
         coin.rotation.y += dt * 3;
 
         if (
-          Math.abs(coin.position.x - car.position.x) < 1.5 &&
-          Math.abs(coin.position.z - car.position.z) < 2.5
+          Math.abs(coin.position.x - car.position.x) < 1.45 &&
+          Math.abs(coin.position.z - car.position.z) < 2
         ) {
-          coinCount++;
-          recycleCoin(coin);
-          setMessage("+1 COIN!");
-          messageTimer = 1;
+          coinsCollected++;
+          resetCoin(coin);
+          showMessage("+1 COIN!", 0.8);
         }
 
-        if (coin.position.z > 12) recycleCoin(coin);
+        if (coin.position.z > 12) resetCoin(coin);
       });
 
-      buildings.forEach(({ mesh }) => {
-        mesh.position.z += worldSpeed;
-        if (mesh.position.z > 25) mesh.position.z -= 700;
+      scenery.forEach(item => {
+        item.mesh.position.z += travel;
+        if (item.mesh.position.z > 35) item.mesh.position.z -= 660;
       });
 
-      if (messageTimer > 0) {
-        messageTimer -= dt;
-        if (messageTimer <= 0) setMessage("");
-      }
+      roadMarks.forEach(mark => {
+        mark.position.z += travel;
+        if (mark.position.z > 45) mark.position.z -= 600;
+      });
 
-      if (damage >= 100) {
-        playing = false;
-        setMessage("GAME OVER! PRESS RESTART");
+      if (messageTime > 0) {
+        messageTime -= dt;
+        if (messageTime <= 0) $("message").textContent = "";
       }
 
       updateHUD();
     }
 
-    // Smooth chase camera
-    camera.position.x += (car.position.x * 0.55 - camera.position.x) * Math.min(1, dt * 4);
-    camera.position.y = 4.8;
-    camera.position.z = car.position.z + 9;
-    camera.lookAt(car.position.x * 0.6, 0.8, car.position.z - 8);
+    if (car && camera) {
+      camera.position.x +=
+        (car.position.x * 0.48 - camera.position.x) * Math.min(1, dt * 3.5);
+      camera.position.y = 5.2;
+      camera.position.z = car.position.z + 10.5;
+      camera.lookAt(car.position.x * 0.45, 0.7, car.position.z - 9);
+    }
 
     renderer.render(scene, camera);
   }
 
   function resize() {
-    const w = game.clientWidth;
-    const h = game.clientHeight;
-    if (!w || !h) return;
-
+    if (!camera || !renderer) return;
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
   }
 
   window.addEventListener("resize", resize);
-  if (window.ResizeObserver) new ResizeObserver(resize).observe(game);
 
-  updateHUD();
-  animate();
+  if ("ResizeObserver" in window) {
+    new ResizeObserver(resize).observe(container);
+  }
+
+  try {
+    init();
+    updateHUD();
+  } catch (error) {
+    console.error("Turbo Rush startup error:", error);
+    container.innerHTML =
+      '<div style="color:white;padding:24px;font:16px Arial">Game startup failed. Open the browser console (F12) to see the error.</div>';
+  }
 })();
