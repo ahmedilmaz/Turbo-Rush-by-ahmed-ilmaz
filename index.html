@@ -1,50 +1,74 @@
 
-<div id="game">
-  <div id="hud">
-    <div class="brand">TURBO<span>RUSH</span><small>BY AHMED ILMAZ</small></div>
-    <div class="stats">
-      <div class="stat"><small>SPEED</small><strong><span id="speed">0</span><i>KM/H</i></strong></div>
-      <div class="stat"><small>DISTANCE</small><strong id="distance">0 m</strong></div>
-      <div class="stat"><small>COINS</small><strong id="coins">◆ 0</strong></div>
-    </div>
-  </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TURBO RUSH</title>
 
-  <div id="message">
-    <div class="panel">
-      <div class="car-icon">🏎️</div>
-      <div class="eyebrow">NEXT GENERATION RACING</div>
-      <h1 id="title">TURBO RUSH</h1>
-      <p id="description">Hit the highway. Dodge traffic. Own the road.</p>
-      <button id="start">START ENGINE ▶</button>
-      <div class="instructions">
-        <span>W / ↑</span> ACCELERATE
-        <span>S / ↓</span> BRAKE
-        <span>A / D</span> STEER
-        <span>SHIFT</span> NITRO
+  <link rel="stylesheet" href="./style.css">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="./script.js" defer></script>
+</head>
+<body>
+
+  <div id="game">
+    <div id="hud">
+      <div class="logo">TURBO<span>RUSH</span></div>
+
+      <div class="stats">
+        <div class="stat">
+          <small>SPEED</small>
+          <strong id="speed">0</strong>
+          <small>KM/H</small>
+        </div>
+
+        <div class="stat">
+          <small>DISTANCE</small>
+          <strong id="distance">0 m</strong>
+        </div>
+
+        <div class="stat">
+          <small>COINS</small>
+          <strong id="coins">◆ 0</strong>
+        </div>
+      </div>
+
+      <div id="nitro">
+        <span>NITRO</span>
+        <div id="nitroTrack">
+          <div id="nitroFill"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="message">
+      <div class="panel">
+        <div class="eyebrow">NEON HIGHWAY RACING</div>
+        <h1 id="title">TURBO <span>RUSH</span></h1>
+        <p id="description">Dodge traffic. Collect coins. Rule the highway.</p>
+        <button id="start" type="button">START ENGINE ▶</button>
+        <p class="help">WASD / ARROWS · SHIFT FOR NITRO</p>
+      </div>
+    </div>
+
+    <div id="damage"></div>
+    <div id="toast"></div>
+
+    <div id="controls">
+      <div class="steering">
+        <button id="left" type="button" aria-label="Steer left">◀</button>
+        <button id="right" type="button" aria-label="Steer right">▶</button>
+      </div>
+
+      <div class="driving">
+        <button id="boost" type="button">⚡ NITRO</button>
+        <button id="brake" type="button">BRAKE</button>
+        <button id="accelerate" type="button">ACCELERATE ▲</button>
       </div>
     </div>
   </div>
 
-  <div id="damage"></div>
-
-  <div id="nitroBar">
-    <span>⚡ NITRO</span>
-    <div><b id="nitroFill"></b></div>
-  </div>
-
-  <div id="controls">
-    <div class="steering">
-      <button id="left">◀</button>
-      <button id="right">▶</button>
-    </div>
-    <div class="pedals">
-      <button id="brake" class="pedal brake">■<small>BRAKE</small></button>
-      <button id="boost" class="pedal boost">⚡<small>NITRO</small></button>
-      <button id="accelerate" class="pedal accelerate">▲<small>ACCEL</small></button>
-    </div>
-  </div>
-
-  <div id="toast"></div>
-</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</body>
+</html>
